@@ -157,7 +157,8 @@ def setup_tls(portal: str, insecure: bool = False, expect: str | None = None) ->
     if expect:
         wanted = expect.split(":", 1)[-1].replace(":", "").lower()
         if wanted != fingerprint:
-            die(f"certificate fingerprint mismatch!\n  expected: {wanted}\n  got:      {fingerprint}")
+            die("certificate fingerprint mismatch!\n"
+                f"  expected: {wanted}\n  got:      {fingerprint}")
         log("certificate fingerprint matches --servercert")
 
     if insecure:

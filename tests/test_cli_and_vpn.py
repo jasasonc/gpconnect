@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from gpconnect.cli import build_parser
+from gpconnect.cli import parse_args
 from gpconnect.tls import Tls
 from gpconnect.vpn import elevation_prefix, run_openconnect
 
@@ -13,24 +13,30 @@ TLS = Tls("deadbeef", "/tmp/ca.pem")
 
 
 def test_shared_flags_work_after_the_subcommand():
-    args = build_parser().parse_args(["connect", "vpn.example.org", "--webview"])
+    args = parse_args(["connect", "vpn.example.org", "--webview"])
     assert args.portal == "vpn.example.org"
     assert args.webview is True
 
 
 def test_shared_flags_work_before_the_subcommand():
-    args = build_parser().parse_args(["--webview", "connect", "vpn.example.org"])
+    args = parse_args(["--webview", "connect", "vpn.example.org"])
     assert args.webview is True
 
 
 def test_extra_openconnect_args_are_passed_through():
-    args = build_parser().parse_args(["connect", "vpn.example.org", "--", "-v"])
+    args = parse_args(["connect", "vpn.example.org", "--", "-v"])
     assert args.openconnect_args == ["-v"]
+
+
+def test_defaults_are_applied_when_flags_are_absent():
+    args = parse_args(["connect", "vpn.example.org"])
+    assert (args.webview, args.timeout, args.elevate) == (False, 300.0, "auto")
+    assert args.insecure is False and args.servercert is None
 
 
 def test_unknown_subcommand_is_rejected():
     with pytest.raises(SystemExit):
-        build_parser().parse_args(["nope"])
+        parse_args(["nope"])
 
 
 def test_elevation_none_is_empty():

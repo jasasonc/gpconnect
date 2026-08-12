@@ -123,7 +123,7 @@ class CallbackServer:
             self.result = data
             self.event.set()
 
-    def __enter__(self) -> "CallbackServer":
+    def __enter__(self) -> CallbackServer:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         PORT_FILE.write_text(str(self.port))
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()

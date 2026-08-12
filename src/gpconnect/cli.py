@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import sys
 
@@ -12,23 +13,37 @@ from .portal import getconfig, prelogin
 from .tls import setup_tls
 from .vpn import run_openconnect
 
+#: Defaults for the shared flags. They are *not* declared as argparse defaults:
+#: the parent parser is reused by every subparser, and a subparser would then
+#: reset whatever was given before the subcommand ("gpconnect --webview connect
+#: host" would silently lose --webview). Declaring them SUPPRESS keeps unset
+#: options out of the namespace, and we fill the gaps once, afterwards.
+SHARED_DEFAULTS = {
+    "insecure": False,
+    "servercert": None,
+    "browser": None,
+    "no_browser": False,
+    "webview": False,
+    "timeout": 300.0,
+    "elevate": "auto",
+}
+
 
 def build_parser() -> argparse.ArgumentParser:
     # Shared flags live in a parent parser so they work before *and* after the
     # subcommand -- `gpconnect connect host --webview` is what people type.
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--insecure", action="store_true",
-                        help="do not verify the TLS certificate")
-    common.add_argument("--servercert", help="expected fingerprint, e.g. sha256:abc...")
-    common.add_argument("--browser", help="browser command (default: xdg-open)")
-    common.add_argument("--no-browser", action="store_true",
-                        help="do not open a browser; just print the SAML URL")
-    common.add_argument("--webview", action="store_true",
-                        help="log in inside an embedded WebKit window (bypasses Chrome)")
-    common.add_argument("--timeout", type=float, default=300.0,
-                        help="seconds to wait for the login")
-    common.add_argument("--elevate", choices=("auto", "sudo", "pkexec", "none"), default="auto",
-                        help="how to gain root for openconnect")
+    add = functools.partial(common.add_argument, default=argparse.SUPPRESS)
+    add("--insecure", action="store_true", help="do not verify the TLS certificate")
+    add("--servercert", help="expected fingerprint, e.g. sha256:abc...")
+    add("--browser", help="browser command (default: xdg-open)")
+    add("--no-browser", action="store_true",
+        help="do not open a browser; just print the SAML URL")
+    add("--webview", action="store_true",
+        help="log in inside an embedded WebKit window (bypasses Chrome)")
+    add("--timeout", type=float, help="seconds to wait for the login (default: 300)")
+    add("--elevate", choices=("auto", "sudo", "pkexec", "none"),
+        help="how to gain root for openconnect (default: auto)")
 
     parser = argparse.ArgumentParser(
         prog="gpconnect", description=package_doc, parents=[common],
@@ -61,8 +76,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse arguments and apply the shared defaults left out by SUPPRESS."""
     args = build_parser().parse_args(argv)
+    for key, value in SHARED_DEFAULTS.items():
+        if not hasattr(args, key):
+            setattr(args, key, value)
+    return args
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
 
     if args.cmd == "install-handler":
         install_handler()
