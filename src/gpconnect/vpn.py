@@ -58,6 +58,11 @@ def run_openconnect(portal: str, auth: dict, tls: Tls, gateway: str | None,
         f"--usergroup={scope}:{kind}",
         "--os=linux-64",
         "--passwd-on-stdin",
+        # We supply everything openconnect needs, and stdin is a pipe. Without
+        # this a rejected cookie turns into a prompt and the opaque
+        # "fgets (stdin): Inappropriate ioctl for device"; with it, it fails
+        # cleanly and the caller can fall back to a fresh login.
+        "--non-inter",
         f"--servercert=sha256:{tls.fingerprint}",
     ]
     if tls.cafile:

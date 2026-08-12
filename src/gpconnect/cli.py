@@ -154,6 +154,34 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def save_reusable_login(args, auth: dict, tls) -> dict:
+    """Store a cookie that later runs can reuse, and return the auth to connect with.
+
+    A prelogin-cookie is single use: the portal invalidates it the moment it is
+    presented to getconfig.esp. So when we have to ask the portal ourselves, the
+    connection must continue with the portal-userauthcookie we just received --
+    handing openconnect the spent prelogin-cookie makes it fall back to
+    prompting, which fails with "fgets (stdin)" as there is no terminal.
+    """
+    cookie = auth.get("portal_userauthcookie", "")
+    if cookie:  # the identity provider already handed one over; nothing is spent
+        store.save_cookie(args.portal, auth["username"], cookie)
+        return auth
+
+    config = portal_config(args.portal, auth)  # this spends the prelogin-cookie
+    cookie = config["userauthcookie"] or config["prelogonuserauthcookie"]
+    if cookie:
+        store.save_cookie(args.portal, auth["username"], cookie)
+        return {**auth, "prelogin_cookie": "", "portal_userauthcookie": cookie}
+
+    log("the portal issued no reusable cookie -- cookie authentication is "
+        "disabled on it, so every run needs a login")
+    log("the one-time login cookie was spent asking; logging in once more")
+    hint = "" if args.no_login_hint else args.login_hint
+    return authenticate(args.portal, args.browser, args.timeout, args.no_browser,
+                        args.webview, tls, hint, args.remember)
+
+
 def do_connect(args, tls) -> int:
     """Bring up the tunnel, reusing a saved portal login when there is one."""
     saved = None if args.no_saved_login else store.load_cookie(args.portal)
@@ -176,13 +204,7 @@ def do_connect(args, tls) -> int:
                         args.webview, tls, hint, args.remember)
 
     if args.remember:
-        config = portal_config(args.portal, auth)
-        cookie = config["userauthcookie"] or config["prelogonuserauthcookie"]
-        if cookie:
-            store.save_cookie(args.portal, auth["username"], cookie)
-        else:
-            log("the portal issued no reusable cookie; cookie authentication "
-                "is disabled on it, so a login stays necessary")
+        auth = save_reusable_login(args, auth, tls)
 
     return run_openconnect(args.portal, auth, tls, args.gateway, args.openconnect_args,
                            args.elevate)
