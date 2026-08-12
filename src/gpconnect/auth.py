@@ -200,7 +200,7 @@ def open_in_browser(payload: str, method: str, browser: str | None) -> None:
 
 def webview_auth(payload: str, method: str, timeout: float,
                  portal: str = "", tls: Tls | None = None,
-                 remember_session: bool = False) -> str | None:
+                 remember: bool = False) -> str | None:
     """Log in inside an embedded WebKit window.
 
     Chrome will not follow a redirect to a custom scheme without a user gesture,
@@ -243,7 +243,7 @@ def webview_auth(payload: str, method: str, timeout: float,
     window.set_default_size(620, 780)
     view = WebKit2.WebView()
 
-    if remember_session:
+    if remember:
         # Keeps the IdP session across runs, which can also skip MFA -- so this
         # is opt-in: it puts a session cookie on disk.
         DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -364,7 +364,7 @@ def read_stdin_fallback(server: CallbackServer) -> None:
 def authenticate(portal: str, browser: str | None, timeout: float,
                  no_browser: bool = False, webview: bool = False,
                  tls: Tls | None = None, login_hint: str | None = None,
-                 remember_session: bool = False) -> dict:
+                 remember: bool = False) -> dict:
     info = prelogin(portal)
     if not info["saml_payload"]:
         die("this portal does not use SAML; only SAML login is supported so far")
@@ -381,7 +381,7 @@ def authenticate(portal: str, browser: str | None, timeout: float,
 
     if webview:
         raw = webview_auth(payload, info["saml_method"], timeout, portal, tls,
-                           remember_session)
+                           remember)
         return finalize_auth(raw, timeout, portal)
 
     with CallbackServer() as server:
@@ -475,7 +475,10 @@ def uninstall_handler() -> None:
 
 
 def forget() -> None:
-    """Drop the remembered account and any stored login session."""
+    """Drop the remembered account, the saved portal login and any cookies."""
+    from . import store
+
+    store.clear_cookie()
     removed = []
     if CONFIG_FILE.exists():
         CONFIG_FILE.unlink()
@@ -484,6 +487,9 @@ def forget() -> None:
     if cookies.exists():
         cookies.unlink()
         removed.append(str(cookies))
+    if store.CREDENTIALS_FILE.exists():
+        store.CREDENTIALS_FILE.unlink()
+        removed.append(str(store.CREDENTIALS_FILE))
     log("removed: " + ", ".join(removed) if removed else "nothing was remembered")
 
 

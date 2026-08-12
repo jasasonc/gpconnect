@@ -6,10 +6,13 @@ import argparse
 import functools
 import json
 import sys
+import time
 
 from . import __doc__ as package_doc
+from . import store
 from .auth import authenticate, forget, forward_callback, install_handler, uninstall_handler
-from .portal import getconfig, prelogin
+from .common import log
+from .portal import getconfig, portal_config, prelogin
 from .tls import setup_tls
 from .vpn import run_openconnect
 
@@ -28,7 +31,8 @@ SHARED_DEFAULTS = {
     "elevate": "auto",
     "login_hint": None,
     "no_login_hint": False,
-    "remember_session": False,
+    "remember": False,
+    "no_saved_login": False,
 }
 
 
@@ -51,9 +55,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="pre-fill this account (default: whoever logged in last)")
     add("--no-login-hint", action="store_true",
         help="do not pre-fill the account")
-    add("--remember-session", action="store_true",
-        help="keep IdP cookies on disk so the next login is skipped "
-             "(stores a session token)")
+    add("--remember", action="store_true",
+        help="save the login so later runs skip the browser entirely "
+             "(stores a bearer credential; keyring when available)")
+    add("--no-saved-login", action="store_true",
+        help="ignore a saved login for this run")
 
     parser = argparse.ArgumentParser(
         prog="gpconnect", description=package_doc, parents=[common],
@@ -124,9 +130,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"region:          {info['region']}")
         return 0
 
+    if args.cmd == "connect":
+        return do_connect(args, tls)
+
     hint = "" if args.no_login_hint else args.login_hint
     auth = authenticate(args.portal, args.browser, args.timeout, args.no_browser,
-                        args.webview, tls, hint, args.remember_session)
+                        args.webview, tls, hint, args.remember)
 
     if args.cmd == "gateways":
         for gw in getconfig(args.portal, auth):
@@ -141,6 +150,39 @@ def main(argv: list[str] | None = None) -> int:
             print(f"user:   {auth['username']}")
             print(f"cookie: {cookie}")
         return 0
+
+    return 0
+
+
+def do_connect(args, tls) -> int:
+    """Bring up the tunnel, reusing a saved portal login when there is one."""
+    saved = None if args.no_saved_login else store.load_cookie(args.portal)
+    if saved:
+        log("using the saved portal login -- no browser needed")
+        auth = {"username": saved["username"], "prelogin_cookie": "",
+                "portal_userauthcookie": saved["cookie"]}
+        started = time.monotonic()
+        code = run_openconnect(args.portal, auth, tls, args.gateway,
+                               args.openconnect_args, args.elevate)
+        # A quick non-zero exit means the cookie was rejected; a later one is a
+        # normal disconnect and must not throw the saved login away.
+        if code == 0 or time.monotonic() - started > 60:
+            return code
+        log("the saved login was refused (expired?) -- logging in again")
+        store.clear_cookie(args.portal)
+
+    hint = "" if args.no_login_hint else args.login_hint
+    auth = authenticate(args.portal, args.browser, args.timeout, args.no_browser,
+                        args.webview, tls, hint, args.remember)
+
+    if args.remember:
+        config = portal_config(args.portal, auth)
+        cookie = config["userauthcookie"] or config["prelogonuserauthcookie"]
+        if cookie:
+            store.save_cookie(args.portal, auth["username"], cookie)
+        else:
+            log("the portal issued no reusable cookie; cookie authentication "
+                "is disabled on it, so a login stays necessary")
 
     return run_openconnect(args.portal, auth, tls, args.gateway, args.openconnect_args,
                            args.elevate)

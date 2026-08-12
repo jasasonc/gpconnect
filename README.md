@@ -56,6 +56,7 @@ not found`.
 sudo apt install openconnect                             # the tunnel
 sudo apt install python3-requests python3-cryptography   # usually present
 sudo apt install python3-gi gir1.2-webkit2-4.1           # for --webview login
+sudo apt install python3-keyring                          # optional, for --remember
 ```
 
 ## Install
@@ -122,10 +123,37 @@ gpconnect connect vpn.example.org --webview --no-login-hint              # disab
 gpconnect forget                                                         # clear
 ```
 
-With `--remember-session` the login window also keeps its cookies in
-`~/.local/share/gpconnect/cookies.sqlite`, which usually skips the login (and
-MFA) entirely. That is a session token on disk, so it is opt-in; `gpconnect
-forget` removes it.
+### Persistent login: skipping password and MFA
+
+With `--remember`, a successful login is saved and later runs reuse it — no
+browser window, no password, no second factor:
+
+```bash
+gpconnect connect vpn.example.org --webview --remember   # once
+gpconnect connect vpn.example.org --webview              # afterwards: silent
+```
+
+Two things get stored:
+
+- the portal's `portal-userauthcookie`, which replaces the whole SAML round trip.
+  It goes into the **system keyring** when one is available (install
+  `python3-keyring`), otherwise into `~/.config/gpconnect/credentials.json` with
+  mode 0600;
+- the login window's own cookies in `~/.local/share/gpconnect/`, so the identity
+  provider session survives too.
+
+How long it lasts is decided by the portal and your identity provider, not by
+gpconnect: the portal cookie lives as long as its *authentication override*
+lifetime, and the IdP session as long as your conditional-access policy allows.
+When the cookie is refused, gpconnect notices the fast failure, drops it and
+falls back to a normal login.
+
+Both are bearer credentials — anyone who can read them can bring up your VPN —
+which is why this is opt-in. `gpconnect forget` removes everything, and
+`--no-saved-login` ignores it for one run.
+
+If the portal has cookie authentication disabled, `--remember` says so and only
+the pre-filled account remains.
 
 ## Commands
 
@@ -136,13 +164,12 @@ forget` removes it.
 | `gateways` | gateway list from `getconfig.esp` |
 | `connect` | login plus openconnect |
 | `install-handler` / `uninstall-handler` | scheme registration |
-| `forget` | drop the remembered account and session cookies |
+| `forget` | drop the remembered account and the saved login |
 | `callback <url>` | internal; invoked by the browser |
 
 Shared flags: `--webview`, `--insecure`, `--servercert sha256:…`, `--browser`,
 `--no-browser`, `--timeout`, `--elevate`, `--login-hint`, `--no-login-hint`,
-`--remember-session`. They work before or after the
-subcommand.
+`--remember`, `--no-saved-login`. They work before or after the subcommand.
 
 ## Shortcuts
 

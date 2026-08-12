@@ -62,8 +62,13 @@ def host_id() -> str:
     return socket.gethostname()
 
 
-def getconfig(portal: str, auth: dict) -> list[dict]:
-    """Fetch the portal configuration and return the list of gateways."""
+def portal_config(portal: str, auth: dict) -> dict:
+    """Fetch the portal configuration: gateways plus any reusable auth cookie.
+
+    When the portal has cookie authentication enabled it hands out a
+    ``portal-userauthcookie``, which later logins can present instead of going
+    through the identity provider again.
+    """
     data = {
         "prot": "https:",
         "inputStr": "",
@@ -95,4 +100,20 @@ def getconfig(portal: str, auth: dict) -> list[dict]:
             "address": entry.get("name", ""),
             "name": (desc.text or "").strip() if desc is not None and desc.text else "",
         })
-    return gateways
+
+    def cookie(tag: str) -> str:
+        el = root.find(f".//{tag}")
+        value = (el.text or "").strip() if el is not None and el.text else ""
+        # An empty cookie is spelled "empty" by some PAN-OS versions.
+        return "" if value.lower() in ("", "empty") else value
+
+    return {
+        "gateways": gateways,
+        "userauthcookie": cookie("portal-userauthcookie"),
+        "prelogonuserauthcookie": cookie("portal-prelogonuserauthcookie"),
+    }
+
+
+def getconfig(portal: str, auth: dict) -> list[dict]:
+    """The gateway list alone."""
+    return portal_config(portal, auth)["gateways"]
