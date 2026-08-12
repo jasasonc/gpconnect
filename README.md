@@ -136,7 +136,8 @@ gpconnect connect vpn.example.org --webview              # afterwards: silent
 Two things get stored:
 
 - the portal's `portal-userauthcookie`, which replaces the whole SAML round trip.
-  It goes into the **system keyring** when one is available (install
+  It is presented at the **gateway** — the portal itself answers HTTP 512 to it —
+  and goes into the **system keyring** when one is available (install
   `python3-keyring`), otherwise into `~/.config/gpconnect/credentials.json` with
   mode 0600;
 - the login window's own cookies in `~/.local/share/gpconnect/`, so the identity

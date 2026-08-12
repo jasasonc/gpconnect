@@ -90,11 +90,18 @@ def test_gateway_scope(spawn):
     assert "--usergroup=gateway:prelogin-cookie" in rec["argv"]
 
 
-def test_portal_userauthcookie_selects_the_other_usergroup(spawn):
+def test_portal_userauthcookie_enters_at_the_gateway(spawn):
+    """The portal refuses this cookie with HTTP 512; only the gateway takes it."""
     auth = {"username": "u", "prelogin_cookie": "", "portal_userauthcookie": "PORTAL"}
     rec = spawn(auth=auth)
-    assert "--usergroup=portal:portal-userauthcookie" in rec["argv"]
+    assert "--usergroup=gateway:portal-userauthcookie" in rec["argv"]
+    assert "--usergroup=portal:portal-userauthcookie" not in rec["argv"]
     assert rec["stdin"] == b"PORTAL\n"
+
+
+def test_prelogin_cookie_still_enters_at_the_portal(spawn):
+    rec = spawn()
+    assert "--usergroup=portal:prelogin-cookie" in rec["argv"]
 
 
 def test_extra_arguments_precede_the_host(spawn):

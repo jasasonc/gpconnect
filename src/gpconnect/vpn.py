@@ -43,13 +43,15 @@ def run_openconnect(portal: str, auth: dict, tls: Tls, gateway: str | None,
                     extra: list[str], elevate: str = "auto") -> int:
     binary = find_openconnect()
 
+    host = gateway or portal
     if auth.get("prelogin_cookie"):
         cookie, kind = auth["prelogin_cookie"], "prelogin-cookie"
+        scope = "gateway" if gateway else "portal"
     else:
         cookie, kind = auth["portal_userauthcookie"], "portal-userauthcookie"
-
-    host = gateway or portal
-    scope = "gateway" if gateway else "portal"
+        # The portal refuses this cookie (HTTP 512) -- it is meant for the
+        # gateway login, so always enter at the gateway with it.
+        scope = "gateway"
 
     argv = [
         binary,
