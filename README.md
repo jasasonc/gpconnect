@@ -1,5 +1,9 @@
 # gpconnect
 
+[![CI](https://github.com/ladisk/gpconnect/actions/workflows/ci.yml/badge.svg)](https://github.com/ladisk/gpconnect/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 A small, free **GlobalProtect VPN client for Linux**.
 
 Palo Alto's GlobalProtect has no usable free Linux client, and the popular
