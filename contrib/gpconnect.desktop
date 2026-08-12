@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=GlobalProtect VPN (gpconnect)
+Comment=Connect to the GlobalProtect portal
+Exec=gpconnect connect vpn.example.org --webview
+Icon=network-vpn
+Terminal=true
+Categories=Network;
+Keywords=vpn;globalprotect;

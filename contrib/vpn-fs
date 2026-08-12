@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Shortcut for one specific portal. Copy it to ~/.local/bin/ and adjust the host.
+exec gpconnect connect vpn.fs.uni-lj.si --webview "$@"
