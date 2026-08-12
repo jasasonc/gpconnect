@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+"""Run gpconnect straight from a checkout, without installing it.
+
+Handy for a symlink:  ln -sf "$PWD/bin/gpconnect" ~/.local/bin/gpconnect
+
+It deliberately lives in bin/ and carries no .py suffix: a gpconnect.py in the
+repository root would shadow the gpconnect package for anything started from
+there.
+"""
+
+from __future__ import annotations
+
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
+
+from gpconnect.cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -8,7 +8,7 @@ import json
 import sys
 
 from . import __doc__ as package_doc
-from .auth import authenticate, forward_callback, install_handler, uninstall_handler
+from .auth import authenticate, forget, forward_callback, install_handler, uninstall_handler
 from .portal import getconfig, prelogin
 from .tls import setup_tls
 from .vpn import run_openconnect
@@ -26,6 +26,9 @@ SHARED_DEFAULTS = {
     "webview": False,
     "timeout": 300.0,
     "elevate": "auto",
+    "login_hint": None,
+    "no_login_hint": False,
+    "remember_session": False,
 }
 
 
@@ -44,6 +47,13 @@ def build_parser() -> argparse.ArgumentParser:
     add("--timeout", type=float, help="seconds to wait for the login (default: 300)")
     add("--elevate", choices=("auto", "sudo", "pkexec", "none"),
         help="how to gain root for openconnect (default: auto)")
+    add("--login-hint", metavar="EMAIL",
+        help="pre-fill this account (default: whoever logged in last)")
+    add("--no-login-hint", action="store_true",
+        help="do not pre-fill the account")
+    add("--remember-session", action="store_true",
+        help="keep IdP cookies on disk so the next login is skipped "
+             "(stores a session token)")
 
     parser = argparse.ArgumentParser(
         prog="gpconnect", description=package_doc, parents=[common],
@@ -69,6 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("install-handler", help="register the globalprotectcallback: scheme")
     sub.add_parser("uninstall-handler", help="remove that registration")
+    sub.add_parser("forget", help="delete the remembered account and session cookies")
 
     p_cb = sub.add_parser("callback", help="internal: receive a callback URL")
     p_cb.add_argument("url")
@@ -97,6 +108,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "callback":
         forward_callback(args.url)
         return 0
+    if args.cmd == "forget":
+        forget()
+        return 0
 
     tls = setup_tls(args.portal, args.insecure, args.servercert)
 
@@ -110,8 +124,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"region:          {info['region']}")
         return 0
 
+    hint = "" if args.no_login_hint else args.login_hint
     auth = authenticate(args.portal, args.browser, args.timeout, args.no_browser,
-                        args.webview, tls)
+                        args.webview, tls, hint, args.remember_session)
 
     if args.cmd == "gateways":
         for gw in getconfig(args.portal, auth):

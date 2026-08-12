@@ -31,11 +31,52 @@ from pathlib import Path
 
 import requests
 
-from .common import CACHE_DIR, CALLBACK_SCHEME, DESKTOP_ID, PORT_FILE, die, log
+from .common import (
+    CACHE_DIR,
+    CALLBACK_SCHEME,
+    CONFIG_FILE,
+    DATA_DIR,
+    DESKTOP_ID,
+    PORT_FILE,
+    die,
+    load_config,
+    log,
+    save_config,
+)
 from .portal import prelogin
 from .tls import Tls
 
 AUTH_TAGS = ("saml-auth-status", "saml-username", "prelogin-cookie", "portal-userauthcookie")
+
+
+def remembered_username(portal: str) -> str:
+    return load_config().get("portals", {}).get(portal, {}).get("username", "")
+
+
+def remember_username(portal: str, username: str) -> None:
+    """Remember who logged in, so the next login can skip the account prompt.
+
+    An e-mail address is not a secret; nothing else is stored here.
+    """
+    if not username or remembered_username(portal) == username:
+        return
+    config = load_config()
+    config.setdefault("portals", {}).setdefault(portal, {})["username"] = username
+    save_config(config)
+
+
+def with_login_hint(url: str, username: str) -> str:
+    """Append ``login_hint`` so the IdP pre-fills the account.
+
+    Appended textually: the SAML request is already percent-encoded and
+    re-encoding the query string risks corrupting it.
+    """
+    if not username or not url.lower().startswith(("http://", "https://")):
+        return url
+    if re.search(r"[?&]login_hint=", url):
+        return url
+    separator = "&" if "?" in url else "?"
+    return f"{url}{separator}login_hint={urllib.parse.quote(username, safe='')}"
 
 
 def parse_auth_data(raw: str) -> dict:
@@ -158,7 +199,8 @@ def open_in_browser(payload: str, method: str, browser: str | None) -> None:
 
 
 def webview_auth(payload: str, method: str, timeout: float,
-                 portal: str = "", tls: Tls | None = None) -> str | None:
+                 portal: str = "", tls: Tls | None = None,
+                 remember_session: bool = False) -> str | None:
     """Log in inside an embedded WebKit window.
 
     Chrome will not follow a redirect to a custom scheme without a user gesture,
@@ -200,6 +242,18 @@ def webview_auth(payload: str, method: str, timeout: float,
     window = Gtk.Window(title="GlobalProtect login")
     window.set_default_size(620, 780)
     view = WebKit2.WebView()
+
+    if remember_session:
+        # Keeps the IdP session across runs, which can also skip MFA -- so this
+        # is opt-in: it puts a session cookie on disk.
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        DATA_DIR.chmod(0o700)
+        cookies = view.get_context().get_cookie_manager()
+        cookies.set_persistent_storage(str(DATA_DIR / "cookies.sqlite"),
+                                       WebKit2.CookiePersistentStorage.SQLITE)
+        cookies.set_accept_policy(WebKit2.CookieAcceptPolicy.ALWAYS)
+        log(f"remembering the login session in {DATA_DIR}")
+
     # Entra ID rejects unknown clients, so present a mainstream browser UA.
     view.get_settings().set_user_agent(
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 "
@@ -309,7 +363,8 @@ def read_stdin_fallback(server: CallbackServer) -> None:
 
 def authenticate(portal: str, browser: str | None, timeout: float,
                  no_browser: bool = False, webview: bool = False,
-                 tls: Tls | None = None) -> dict:
+                 tls: Tls | None = None, login_hint: str | None = None,
+                 remember_session: bool = False) -> dict:
     info = prelogin(portal)
     if not info["saml_payload"]:
         die("this portal does not use SAML; only SAML login is supported so far")
@@ -317,9 +372,17 @@ def authenticate(portal: str, browser: str | None, timeout: float,
         log("warning: portal does not advertise saml-default-browser; "
             "the manual fallback may be needed")
 
+    hint = remembered_username(portal) if login_hint is None else login_hint
+    payload = info["saml_payload"]
+    if hint and info["saml_method"] != "POST":
+        payload = with_login_hint(payload, hint)
+        if payload != info["saml_payload"]:
+            log(f"pre-filling the account: {hint}")
+
     if webview:
-        raw = webview_auth(info["saml_payload"], info["saml_method"], timeout, portal, tls)
-        return finalize_auth(raw, timeout)
+        raw = webview_auth(payload, info["saml_method"], timeout, portal, tls,
+                           remember_session)
+        return finalize_auth(raw, timeout, portal)
 
     with CallbackServer() as server:
         if not handler_installed():
@@ -327,9 +390,9 @@ def authenticate(portal: str, browser: str | None, timeout: float,
             install_handler()
 
         if no_browser:
-            print("SAML-URL: " + info["saml_payload"].strip(), flush=True)
+            print("SAML-URL: " + payload.strip(), flush=True)
         else:
-            open_in_browser(info["saml_payload"], info["saml_method"], browser)
+            open_in_browser(payload, info["saml_method"], browser)
         print(
             "\nComplete the login in the browser.\n"
             "If it does not finish by itself, paste the 'globalprotectcallback:...' URL "
@@ -340,10 +403,10 @@ def authenticate(portal: str, browser: str | None, timeout: float,
 
         raw = server.wait(timeout)
 
-    return finalize_auth(raw, timeout)
+    return finalize_auth(raw, timeout, portal)
 
 
-def finalize_auth(raw: str | None, timeout: float) -> dict:
+def finalize_auth(raw: str | None, timeout: float, portal: str = "") -> dict:
     if raw is None:
         die(f"login did not complete within {int(timeout)} s")
 
@@ -354,6 +417,8 @@ def finalize_auth(raw: str | None, timeout: float) -> dict:
         die("the response carried no username or cookie")
 
     log(f"logged in as {auth['username']}")
+    if portal:
+        remember_username(portal, auth["username"])
     return auth
 
 
@@ -407,6 +472,19 @@ def uninstall_handler() -> None:
         subprocess.run(["update-desktop-database", str(path.parent)], check=False,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     log("handler removed")
+
+
+def forget() -> None:
+    """Drop the remembered account and any stored login session."""
+    removed = []
+    if CONFIG_FILE.exists():
+        CONFIG_FILE.unlink()
+        removed.append(str(CONFIG_FILE))
+    cookies = DATA_DIR / "cookies.sqlite"
+    if cookies.exists():
+        cookies.unlink()
+        removed.append(str(cookies))
+    log("removed: " + ", ".join(removed) if removed else "nothing was remembered")
 
 
 def forward_callback(url: str) -> None:

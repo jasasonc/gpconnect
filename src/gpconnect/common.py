@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -18,6 +19,25 @@ DESKTOP_ID = "gpconnect-callback.desktop"
 
 CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "gpconnect"
 PORT_FILE = CACHE_DIR / "callback.port"
+
+CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "gpconnect"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+#: Persistent WebKit storage; only used with --remember-session.
+DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "gpconnect"
+
+
+def load_config() -> dict:
+    try:
+        return json.loads(CONFIG_FILE.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def save_config(config: dict) -> None:
+    """Store per-portal preferences. Only non-secret data belongs here."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n")
+    CONFIG_FILE.chmod(0o600)
 
 SESSION = requests.Session()
 SESSION.headers["User-Agent"] = USER_AGENT

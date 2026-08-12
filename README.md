@@ -68,7 +68,7 @@ Or run it straight from a checkout — no install needed:
 
 ```bash
 git clone https://github.com/ladisk/gpconnect
-ln -sf "$PWD/gpconnect/gpconnect.py" ~/.local/bin/gpconnect
+ln -sf "$PWD/gpconnect/bin/gpconnect" ~/.local/bin/gpconnect
 ```
 
 ## Usage
@@ -109,6 +109,24 @@ mode.
 If the browser route stalls anyway, you can paste the `globalprotectcallback:…`
 URL into the terminal and press Enter; `gpconnect` also listens on stdin.
 
+### Not typing your address every time
+
+After a successful login the account name is stored in
+`~/.config/gpconnect/config.json` (per portal, mode 0600) and passed to the
+identity provider as `login_hint` on the next run, so the account is pre-filled.
+Nothing secret is written there — just the address.
+
+```bash
+gpconnect connect vpn.example.org --webview --login-hint me@example.org  # override
+gpconnect connect vpn.example.org --webview --no-login-hint              # disable
+gpconnect forget                                                         # clear
+```
+
+With `--remember-session` the login window also keeps its cookies in
+`~/.local/share/gpconnect/cookies.sqlite`, which usually skips the login (and
+MFA) entirely. That is a session token on disk, so it is opt-in; `gpconnect
+forget` removes it.
+
 ## Commands
 
 | command | description |
@@ -118,10 +136,12 @@ URL into the terminal and press Enter; `gpconnect` also listens on stdin.
 | `gateways` | gateway list from `getconfig.esp` |
 | `connect` | login plus openconnect |
 | `install-handler` / `uninstall-handler` | scheme registration |
+| `forget` | drop the remembered account and session cookies |
 | `callback <url>` | internal; invoked by the browser |
 
 Shared flags: `--webview`, `--insecure`, `--servercert sha256:…`, `--browser`,
-`--no-browser`, `--timeout`, `--elevate`. They work before or after the
+`--no-browser`, `--timeout`, `--elevate`, `--login-hint`, `--no-login-hint`,
+`--remember-session`. They work before or after the
 subcommand.
 
 ## Shortcuts
