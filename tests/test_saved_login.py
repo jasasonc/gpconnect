@@ -94,6 +94,7 @@ def test_saved_login_skips_the_browser(monkeypatch):
     def boom(*_args, **_kwargs):
         raise AssertionError("authenticate() must not be called")
 
+    monkeypatch.setattr(cli, "check_cookie", lambda *_a: True)
     monkeypatch.setattr(cli, "run_openconnect", fake_run)
     monkeypatch.setattr(cli, "authenticate", boom)
 
@@ -102,7 +103,7 @@ def test_saved_login_skips_the_browser(monkeypatch):
     assert captured["auth"]["username"] == "u@example.org"
 
 
-def test_a_rejected_cookie_is_dropped_and_login_retried(monkeypatch):
+def test_a_refused_cookie_is_dropped_and_login_retried(monkeypatch):
     from gpconnect import cli
 
     store.save_cookie("vpn.example.org", "u@example.org", "STALE")
@@ -110,8 +111,9 @@ def test_a_rejected_cookie_is_dropped_and_login_retried(monkeypatch):
 
     def fake_run(portal, auth, tls, gateway, extra, elevate):
         calls.append(auth)
-        return 0 if auth.get("prelogin_cookie") else 1  # the stale cookie fails fast
+        return 0
 
+    monkeypatch.setattr(cli, "check_cookie", lambda *_a: False)
     monkeypatch.setattr(cli, "run_openconnect", fake_run)
     monkeypatch.setattr(cli, "authenticate",
                         lambda *a, **k: {"username": "u@example.org",
@@ -119,8 +121,45 @@ def test_a_rejected_cookie_is_dropped_and_login_retried(monkeypatch):
                                          "portal_userauthcookie": ""})
 
     assert cli.do_connect(Args(), tls=None) == 0
-    assert len(calls) == 2                        # stale attempt, then a fresh login
+    assert len(calls) == 1                        # the refused cookie never reaches the tunnel
+    assert calls[0]["prelogin_cookie"] == "FRESH"
     assert store.load_cookie("vpn.example.org") is None   # the bad cookie is gone
+
+
+def test_a_failing_tunnel_keeps_an_accepted_cookie(monkeypatch):
+    """A cancelled password prompt or a dropped link says nothing about the cookie."""
+    from gpconnect import cli
+
+    store.save_cookie("vpn.example.org", "u@example.org", "COOKIE")
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("authenticate() must not be called")
+
+    monkeypatch.setattr(cli, "check_cookie", lambda *_a: True)
+    monkeypatch.setattr(cli, "run_openconnect", lambda *_a: 126)
+    monkeypatch.setattr(cli, "authenticate", boom)
+
+    assert cli.do_connect(Args(), tls=None) == 126
+    assert store.load_cookie("vpn.example.org")["cookie"] == "COOKIE"
+
+
+def test_an_unverifiable_cookie_is_tried_and_kept(monkeypatch):
+    """No network during the check is no reason to throw the cookie away."""
+    from gpconnect import cli
+
+    store.save_cookie("vpn.example.org", "u@example.org", "COOKIE")
+    used = {}
+
+    def fake_run(portal, auth, tls, gateway, extra, elevate):
+        used["auth"] = auth
+        return 1
+
+    monkeypatch.setattr(cli, "check_cookie", lambda *_a: None)
+    monkeypatch.setattr(cli, "run_openconnect", fake_run)
+
+    assert cli.do_connect(Args(), tls=None) == 1
+    assert used["auth"]["portal_userauthcookie"] == "COOKIE"
+    assert store.load_cookie("vpn.example.org")["cookie"] == "COOKIE"
 
 
 def test_no_saved_login_ignores_the_stored_cookie(monkeypatch):

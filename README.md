@@ -146,8 +146,10 @@ Two things get stored:
 How long it lasts is decided by the portal and your identity provider, not by
 gpconnect: the portal cookie lives as long as its *authentication override*
 lifetime, and the IdP session as long as your conditional-access policy allows.
-When the cookie is refused, gpconnect notices the fast failure, drops it and
-falls back to a normal login.
+Before each connect, gpconnect checks the saved cookie with
+`openconnect --authenticate` (no root, no tunnel). When it is refused, gpconnect
+drops it and falls back to a normal login. A failure after the check, such as a
+cancelled password prompt, leaves the cookie alone.
 
 Both are bearer credentials — anyone who can read them can bring up your VPN —
 which is why this is opt-in. `gpconnect forget` removes everything, and

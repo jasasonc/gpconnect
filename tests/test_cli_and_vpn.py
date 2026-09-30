@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import subprocess
+
 import pytest
 
 from gpconnect.cli import parse_args
 from gpconnect.tls import Tls
-from gpconnect.vpn import elevation_prefix, run_openconnect
+from gpconnect.vpn import check_cookie, elevation_prefix, run_openconnect
 
 AUTH = {"username": "u@example.org", "prelogin_cookie": "COOKIE", "portal_userauthcookie": ""}
 TLS = Tls("deadbeef", "/tmp/ca.pem")
@@ -107,3 +109,45 @@ def test_prelogin_cookie_still_enters_at_the_portal(spawn):
 def test_extra_arguments_precede_the_host(spawn):
     rec = spawn(extra=["-v"])
     assert rec["argv"][-2:] == ["-v", "vpn.example.org"]
+
+
+@pytest.fixture
+def authenticate_only(monkeypatch):
+    """Stand in for `openconnect --authenticate` with a given exit code and output."""
+    recorded: dict = {}
+
+    def install(returncode=0, output=""):
+        def fake_run(argv, **kwargs):
+            recorded["argv"], recorded["input"] = argv, kwargs.get("input")
+            return subprocess.CompletedProcess(argv, returncode, "", output)
+
+        monkeypatch.setattr("gpconnect.vpn.find_openconnect", lambda: "/usr/sbin/openconnect")
+        monkeypatch.setattr("gpconnect.vpn.subprocess.run", fake_run)
+        return recorded
+
+    return install
+
+
+SAVED = {"username": "u@example.org", "prelogin_cookie": "",
+         "portal_userauthcookie": "SAVED"}
+
+
+def test_cookie_check_needs_no_root_and_no_tunnel(authenticate_only):
+    recorded = authenticate_only(returncode=0)
+    assert check_cookie("vpn.example.org", SAVED, TLS, None) is True
+    assert recorded["argv"][0] == "/usr/sbin/openconnect"   # no sudo/pkexec in front
+    assert "--authenticate" in recorded["argv"]
+    assert "--usergroup=gateway:portal-userauthcookie" in recorded["argv"]
+    assert recorded["input"] == "SAVED\n"
+
+
+def test_cookie_check_recognises_a_refusal(authenticate_only):
+    authenticate_only(returncode=1, output="User input required in non-interactive mode\n"
+                                           "Failed to complete authentication\n")
+    assert check_cookie("vpn.example.org", SAVED, TLS, None) is False
+
+
+def test_cookie_check_is_undecided_without_network(authenticate_only):
+    authenticate_only(returncode=1, output="Failed to connect to host vpn.example.org\n"
+                                           "Failed to complete authentication\n")
+    assert check_cookie("vpn.example.org", SAVED, TLS, None) is None

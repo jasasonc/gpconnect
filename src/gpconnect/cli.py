@@ -6,7 +6,6 @@ import argparse
 import functools
 import json
 import sys
-import time
 
 from . import __doc__ as package_doc
 from . import store
@@ -14,7 +13,7 @@ from .auth import authenticate, forget, forward_callback, install_handler, unins
 from .common import log
 from .portal import getconfig, portal_config, prelogin
 from .tls import setup_tls
-from .vpn import run_openconnect
+from .vpn import check_cookie, run_openconnect
 
 #: Defaults for the shared flags. They are *not* declared as argparse defaults:
 #: the parent parser is reused by every subparser, and a subparser would then
@@ -186,16 +185,15 @@ def do_connect(args, tls) -> int:
     """Bring up the tunnel, reusing a saved portal login when there is one."""
     saved = None if args.no_saved_login else store.load_cookie(args.portal)
     if saved:
-        log("using the saved portal login -- no browser needed")
         auth = {"username": saved["username"], "prelogin_cookie": "",
                 "portal_userauthcookie": saved["cookie"]}
-        started = time.monotonic()
-        code = run_openconnect(args.portal, auth, tls, args.gateway,
-                               args.openconnect_args, args.elevate)
-        # A quick non-zero exit means the cookie was rejected; a later one is a
-        # normal disconnect and must not throw the saved login away.
-        if code == 0 or time.monotonic() - started > 60:
-            return code
+        accepted = check_cookie(args.portal, auth, tls, args.gateway)
+        if accepted is not False:
+            if accepted is None:
+                log("could not check the saved login (network?) -- trying it anyway")
+            log("using the saved portal login -- no browser needed")
+            return run_openconnect(args.portal, auth, tls, args.gateway,
+                                   args.openconnect_args, args.elevate)
         log("the saved login was refused (expired?) -- logging in again")
         store.clear_cookie(args.portal)
 
