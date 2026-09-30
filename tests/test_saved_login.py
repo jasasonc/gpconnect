@@ -103,27 +103,37 @@ def test_saved_login_skips_the_browser(monkeypatch):
     assert captured["auth"]["username"] == "u@example.org"
 
 
-def test_a_refused_cookie_is_dropped_and_login_retried(monkeypatch):
+def test_a_refused_cookie_is_replaced_by_a_remembered_login(monkeypatch):
+    """Without --remember, a refused cookie must still be replaced, not just dropped.
+
+    Otherwise one expired cookie leaves every later run at the login window.
+    """
     from gpconnect import cli
 
     store.save_cookie("vpn.example.org", "u@example.org", "STALE")
-    calls = []
+    calls, logins = [], []
 
     def fake_run(portal, auth, tls, gateway, extra, elevate):
         calls.append(auth)
         return 0
 
+    def fake_authenticate(*args, **_kwargs):
+        logins.append(args[-1])  # the remember flag
+        return {"username": "u@example.org", "prelogin_cookie": "FRESH",
+                "portal_userauthcookie": ""}
+
     monkeypatch.setattr(cli, "check_cookie", lambda *_a: False)
     monkeypatch.setattr(cli, "run_openconnect", fake_run)
-    monkeypatch.setattr(cli, "authenticate",
-                        lambda *a, **k: {"username": "u@example.org",
-                                         "prelogin_cookie": "FRESH",
-                                         "portal_userauthcookie": ""})
+    monkeypatch.setattr(cli, "authenticate", fake_authenticate)
+    monkeypatch.setattr(cli, "portal_config",
+                        lambda *_a: {"gateways": [], "userauthcookie": "NEW",
+                                     "prelogonuserauthcookie": ""})
 
     assert cli.do_connect(Args(), tls=None) == 0
+    assert logins == [True]                       # the login window keeps the IdP session
     assert len(calls) == 1                        # the refused cookie never reaches the tunnel
-    assert calls[0]["prelogin_cookie"] == "FRESH"
-    assert store.load_cookie("vpn.example.org") is None   # the bad cookie is gone
+    assert calls[0]["portal_userauthcookie"] == "NEW"
+    assert store.load_cookie("vpn.example.org")["cookie"] == "NEW"
 
 
 def test_a_failing_tunnel_keeps_an_accepted_cookie(monkeypatch):

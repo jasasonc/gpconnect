@@ -178,7 +178,7 @@ def save_reusable_login(args, auth: dict, tls) -> dict:
     log("the one-time login cookie was spent asking; logging in once more")
     hint = "" if args.no_login_hint else args.login_hint
     return authenticate(args.portal, args.browser, args.timeout, args.no_browser,
-                        args.webview, tls, hint, args.remember)
+                        args.webview, tls, hint, remember=True)
 
 
 def do_connect(args, tls) -> int:
@@ -197,11 +197,14 @@ def do_connect(args, tls) -> int:
         log("the saved login was refused (expired?) -- logging in again")
         store.clear_cookie(args.portal)
 
+    # Having a saved login means --remember was chosen before; keep honouring it,
+    # or one expired cookie would leave every later run at the login window.
+    remember = args.remember or bool(saved)
     hint = "" if args.no_login_hint else args.login_hint
     auth = authenticate(args.portal, args.browser, args.timeout, args.no_browser,
-                        args.webview, tls, hint, args.remember)
+                        args.webview, tls, hint, remember)
 
-    if args.remember:
+    if remember:
         auth = save_reusable_login(args, auth, tls)
 
     return run_openconnect(args.portal, auth, tls, args.gateway, args.openconnect_args,
