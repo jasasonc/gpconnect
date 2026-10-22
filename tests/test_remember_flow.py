@@ -92,10 +92,12 @@ def test_openconnect_never_waits_for_input():
     recorded = {}
 
     class FakeProc:
-        returncode = 0
+        stdin = type("FakeStdin", (), {"write": lambda self, data: None,
+                                       "close": lambda self: None})()
+        stdout = iter([])
 
-        def communicate(self, input=None):
-            return b"", b""
+        def wait(self):
+            return 0
 
     def fake_popen(argv, **_kwargs):
         recorded["argv"] = argv

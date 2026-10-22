@@ -8,7 +8,7 @@ import pytest
 
 from gpconnect.cli import parse_args
 from gpconnect.tls import Tls
-from gpconnect.vpn import check_cookie, elevation_prefix, run_openconnect
+from gpconnect.vpn import check_cookie, elevation_prefix, run_openconnect, status_message
 
 AUTH = {"username": "u@example.org", "prelogin_cookie": "COOKIE", "portal_userauthcookie": ""}
 TLS = Tls("deadbeef", "/tmp/ca.pem")
@@ -54,12 +54,19 @@ def spawn(monkeypatch):
     """Run run_openconnect without spawning anything; capture argv and stdin."""
     recorded: dict = {}
 
-    class FakeProc:
-        returncode = 0
+    class FakeStdin:
+        def write(self, data):
+            recorded["stdin"] = data
 
-        def communicate(self, input=None):
-            recorded["stdin"] = input
-            return b"", b""
+        def close(self):
+            pass
+
+    class FakeProc:
+        stdin = FakeStdin()
+        stdout = iter(["ESP session established with server\n"])
+
+        def wait(self):
+            return 0
 
     def fake_popen(argv, **_kwargs):
         recorded["argv"] = argv
@@ -82,7 +89,7 @@ def test_portal_scope_and_pinned_certificate(spawn):
     assert "--servercert=sha256:deadbeef" in rec["argv"]
     assert "--cafile=/tmp/ca.pem" in rec["argv"]
     # the cookie is fed through stdin, never as an argument
-    assert rec["stdin"] == b"COOKIE\n"
+    assert rec["stdin"] == "COOKIE\n"
     assert not any("COOKIE" in arg for arg in rec["argv"])
 
 
@@ -98,7 +105,7 @@ def test_portal_userauthcookie_enters_at_the_gateway(spawn):
     rec = spawn(auth=auth)
     assert "--usergroup=gateway:portal-userauthcookie" in rec["argv"]
     assert "--usergroup=portal:portal-userauthcookie" not in rec["argv"]
-    assert rec["stdin"] == b"PORTAL\n"
+    assert rec["stdin"] == "PORTAL\n"
 
 
 def test_prelogin_cookie_still_enters_at_the_portal(spawn):
@@ -151,3 +158,17 @@ def test_cookie_check_is_undecided_without_network(authenticate_only):
     authenticate_only(returncode=1, output="Failed to connect to host vpn.example.org\n"
                                            "Failed to complete authentication\n")
     assert check_cookie("vpn.example.org", SAVED, TLS, None) is None
+
+
+def test_esp_ready_is_reported_with_the_wait():
+    msg = status_message("ESP session established with server", 3.4)
+    assert msg == "tunnel ready over ESP after 3 s"
+
+
+def test_https_fallback_is_reported_in_minutes():
+    msg = status_message("Failed to connect ESP tunnel; using HTTPS instead.", 135)
+    assert msg.startswith("tunnel ready over HTTPS after 2 min 15 s")
+
+
+def test_ordinary_lines_are_not_reported():
+    assert status_message("Got CONNECT response: HTTP/1.1 200 OK", 1) is None
