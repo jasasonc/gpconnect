@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
+import time
 
 from .common import die, log
 from .tls import Tls
@@ -39,9 +41,37 @@ def elevation_prefix(mode: str) -> list[str]:
     return ["sudo", "--"]
 
 
+# openconnect's own progress lines that mark when traffic can actually flow.
+# Until one of the "ready" lines appears the tunnel device exists but carries
+# nothing, which is the wait users notice after "connected".
+STATUS = [
+    ("Connected to HTTPS on",
+     "connected to the gateway; waiting for the data tunnel (ESP over UDP)"),
+    ("ESP session established", "tunnel ready over ESP after {t}"),
+    ("Failed to connect ESP tunnel",
+     "tunnel ready over HTTPS after {t}: ESP (UDP) is blocked on this network; "
+     "'-- --no-dtls' skips the wait next time"),
+    ("Set up UDP failed", "tunnel ready over HTTPS after {t}: UDP could not be set up"),
+    ("Server asked us to submit HIP report", "the gateway wants a HIP report and may limit access "
+     "without one; see 'Limitations' in the README"),
+    ("detected dead peer", "link lost after {t}; openconnect is reconnecting"),
+]
+
+
+def status_message(line: str, elapsed: float) -> str | None:
+    """Translate one openconnect output line into a gpconnect status message."""
+    for marker, message in STATUS:
+        if marker in line:
+            seconds = round(elapsed)
+            t = f"{seconds} s" if seconds < 120 else f"{seconds // 60} min {seconds % 60} s"
+            return message.format(t=t)
+    return None
+
+
 def openconnect_argv(portal: str, auth: dict, tls: Tls, gateway: str | None,
                      extra: list[str]) -> tuple[list[str], str]:
     """The openconnect command line (without root) and the cookie for its stdin."""
+
     host = gateway or portal
     if auth.get("prelogin_cookie"):
         cookie, kind = auth["prelogin_cookie"], "prelogin-cookie"
@@ -104,8 +134,16 @@ def run_openconnect(portal: str, auth: dict, tls: Tls, gateway: str | None,
 
     log(f"starting openconnect against {gateway or portal}")
     try:
-        proc = subprocess.Popen(argv, stdin=subprocess.PIPE)
-        proc.communicate(input=(cookie + "\n").encode())
-        return proc.returncode or 0
+        start = time.monotonic()
+        proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, bufsize=1)
+        proc.stdin.write(cookie + "\n")
+        proc.stdin.close()
+        for line in proc.stdout:
+            sys.stdout.write(line)
+            message = status_message(line, time.monotonic() - start)
+            if message:
+                log(message)
+        return proc.wait() or 0
     except KeyboardInterrupt:
         return 0
